@@ -68,7 +68,7 @@ public class CommandExecuter implements CommandLineRunner {
 			}));
 
 			log.info(serviceToMethodListMap.toString());
-
+			// zzxcv
 			// Channel channel = ManagedChannelBuilder.forAddress("",
 			// 8080).useTransportSecurity().build();
 			// channel.newCall(mdList.get(0).getDescriptor(). CallOptions.DEFAULT);
