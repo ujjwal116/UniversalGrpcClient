@@ -1,4 +1,4 @@
-package com.ugc;
+package com.ugc.marsheller;
 
 import java.io.IOException;
 import java.io.InputStream;

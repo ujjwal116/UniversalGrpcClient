@@ -11,17 +11,16 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import org.reflections.Reflections;
+import javax.script.ScriptEngine;
+import javax.script.ScriptEngineManager;
+import javax.script.ScriptException;
+
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
-import org.springframework.util.ResourceUtils;
 
 import com.github.os72.protocjar.Protoc;
-import com.google.common.collect.ImmutableList;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
-import com.google.protobuf.DescriptorProtos.MethodDescriptorProto;
-import com.google.protobuf.DescriptorProtos.ServiceDescriptorProto;
 import com.google.protobuf.Descriptors.DescriptorValidationException;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
@@ -29,156 +28,160 @@ import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.DynamicMessage.Builder;
 import com.google.protobuf.TypeRegistry;
 import com.google.protobuf.util.JsonFormat;
+import com.ugc.config.ArgumentConfig;
+import com.ugc.exceptions.ApplicationException;
+import com.ugc.utils.DynamicRequest;
+import com.ugc.utils.RequestReaderUtil;
 
-import io.grpc.BindableService;
-import io.grpc.CallOptions;
-import io.grpc.Channel;
-import io.grpc.ManagedChannelBuilder;
-import io.grpc.MethodDescriptor.MethodType;
-import io.grpc.stub.ClientCalls;
 import lombok.extern.slf4j.Slf4j;
 
 @Component
 @Slf4j
 public class CommandExecuter implements CommandLineRunner {
-	String protoFileRootDirectory = "D://workspace/kramphub-apis/src/main/proto";
-	String protoFile = "/v1/postino.proto";
-	String protoBufDir = "src/main/resources/protobuf-descriptors/";
-	String pbFile = "descriptor.pb";
-	private String requestBody = "src/main/resources/requests/UpsertPreferencesByEventRequest.json";
-	List<String> fullMethodNames = new ArrayList<>();
+    private RequestReaderUtil reqReaderUtil;
 
-	public void buildClient() {
-		Reflections reflections = new Reflections("com.kramphub");
-		reflections.getSubTypesOf(BindableService.class);
-	}
+    public CommandExecuter(RequestReaderUtil reqReaderUtil) {
+        this.reqReaderUtil = reqReaderUtil;
+    }
 
-	public void run(String... args) {
-		// if (Arrays.stream(args).anyMatch(s -> s.equalsIgnoreCase("listService")))
-		listServices();
-	}
+    private static final String PROTOBUF_FILE = "descriptor.pb";
 
-	private void listServices() {
-		try {
-			List<String> files = List.of("/v1/postino.proto", "/v1/bouncer.proto");
-			fullMethodNames.add("postino.OrganizationPreferencesService.UpsertPreferencesByEvent");
+    private List<String> fullMethodNames = new ArrayList<>();
 
-			Path descriptorPath = Path.of(new File(protoBufDir + pbFile).getAbsolutePath());
-			List<String> protocArgs = new ArrayList<String>();
-			protocArgs.add("--proto_path=" + protoFileRootDirectory);
-			protocArgs.add("--descriptor_set_out=" + descriptorPath.toString());
-			protocArgs.add("--include_imports");
-			protocArgs.add(protoFileRootDirectory + files.get(0));
-			protocArgs.add(protoFileRootDirectory + files.get(1));
-			Protoc.runProtoc(protocArgs.toArray(new String[0]));
+    public void run(String... args) {
+        ArgumentConfig arguments = new ArgumentConfig(args);
+        invokeGRPCServices(arguments);
+        // testJS(arguments);
+    }
 
-			FileDescriptorSet set = FileDescriptorSet.parseFrom(Files.readAllBytes(descriptorPath));
-			List<ServiceDescriptorProto> sdList = new ArrayList<>();
-			Map<String, List<String>> serviceToMethodListMap = new HashMap<>();
-			List<MethodDescriptorProto> mdList = new ArrayList<>();
-			set.getFileList().forEach(fileDescriptor -> fileDescriptor.getServiceList().forEach(sd -> {
-				sdList.add(sd);
-				buildServicesToMethodsMap(sd.getName(), sd.getMethodList(), serviceToMethodListMap);
-				sd.getMethodList().forEach(mdList::add);
-			}));
+    private void testJS(ArgumentConfig arguments) {
+        ScriptEngine js = new ScriptEngineManager().getEngineByName("Nashorn");
+        Path path = Path.of(new File(arguments.getRequestJsonDirectory() + "BouncerLogin.json").getAbsolutePath());
+        try {
+            String json = Files.readString(path);
+            js.eval("var json1 = JSON.stringify(" + json + "); print(JSON.parse(json1).serviceCallOrder)");
+            js.eval("print(json1)");
+        } catch (IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        } catch (ScriptException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+    }
 
-			log.info(serviceToMethodListMap.toString());
+    private void invokeGRPCServices(ArgumentConfig arguments) {
 
-			Map<String, FileDescriptorProto> protofileToDescriptorProtoMap = set.getFileList().stream()
-					.collect(Collectors.toMap(protoFile -> protoFile.getName(), protoFile -> protoFile));
+        try {
 
-			Map<String, FileDescriptor> protoFileToDescriptorMap = new HashMap<>();
-			set.getFileList().forEach(
-					fdp -> resolveFileDescriptor(fdp, protoFileToDescriptorMap, protofileToDescriptorProtoMap));
+            Path descriptorPath = Path.of(new File(arguments.getProtoBufDirectory() + PROTOBUF_FILE).getAbsolutePath());
 
-			Map<String, MethodDescriptor> fullNameToMethodDescriptorMap = fetchMethodDescriptorByMethodName(
-					fullMethodNames.stream().collect(Collectors.toSet()), protoFileToDescriptorMap);
+            executeProtocandBuildProtoBuff(arguments, descriptorPath);
 
-			TypeRegistry.Builder typeRegBuilder = TypeRegistry.newBuilder();
-			protoFileToDescriptorMap.forEach((k, v) -> typeRegBuilder.add(v.getMessageTypes()));
+            FileDescriptorSet set = FileDescriptorSet
+                    .parseFrom(Files.readAllBytes(descriptorPath));
 
-			Builder messageBuilder = DynamicMessage
-					.newBuilder(fullNameToMethodDescriptorMap.get(fullMethodNames.get(0)).getInputType());
+            Map<String, FileDescriptorProto> protofileToDescriptorProtoMap = set.getFileList().stream()
+                    .collect(Collectors.toMap(FileDescriptorProto::getName, protoFile -> protoFile));
 
-			JsonFormat.parser().usingTypeRegistry(typeRegBuilder.build())
-					.merge(new String(Files.readAllBytes(ResourceUtils.getFile(requestBody).toPath())), messageBuilder);
-			messageBuilder.build();
+            Map<String, FileDescriptor> protoFileToDescriptorMap = new HashMap<>();
+            set.getFileList().forEach(
+                    fdp -> resolveFileDescriptor(fdp, protoFileToDescriptorMap, protofileToDescriptorProtoMap));
 
-			Channel channel = ManagedChannelBuilder.forAddress("localhost", 8080).useTransportSecurity().build();
+            log.info("Processing proto files including depndencies: {}", protoFileToDescriptorMap.keySet());
 
-			io.grpc.MethodDescriptor.Marshaller<DynamicMessage> requestMarshaller = new DynamicMessageMarshaller(
-					fullNameToMethodDescriptorMap.get(fullMethodNames.get(0)).getInputType());
+            List<DynamicRequest> requests = reqReaderUtil.buildDynamicRequest(arguments.getRequestJsonDirectory());
 
-			io.grpc.MethodDescriptor.Marshaller<DynamicMessage> responseMarshaller = new DynamicMessageMarshaller(
-					fullNameToMethodDescriptorMap.get(fullMethodNames.get(0)).getInputType());
+            requests.sort((req1, req2) -> req1.getServiceCallOrder().compareTo(req2.getServiceCallOrder()));
 
-			io.grpc.MethodDescriptor<DynamicMessage, DynamicMessage> gcpMethodDescriptor = io.grpc.MethodDescriptor
-					.<DynamicMessage, DynamicMessage>newBuilder().setRequestMarshaller(requestMarshaller)
-					.setResponseMarshaller(responseMarshaller).setFullMethodName(fullMethodNames.get(0))
-					.setType(MethodType.UNARY).build();
+            fullMethodNames = requests.stream().map(DynamicRequest::getFullMethodName).collect(Collectors.toList());
 
-			// CommandExecuter
+            Map<String, MethodDescriptor> fullNameToMethodDescriptorMap = buildMethodToMethodDescriptorMap(
+                    protoFileToDescriptorMap);
+            requests.stream().filter(rq -> fullNameToMethodDescriptorMap.containsKey(rq.getFullMethodName()))
+                    .forEach(request -> prepareDynamicMessages(request, fullNameToMethodDescriptorMap));
 
-			// (type, fullMethodName, requestMarshaller, responseMarshaller);
-			ClientCalls.asyncUnaryCall(channel.newCall(gcpMethodDescriptor, CallOptions.DEFAULT),
-					messageBuilder.build(), new ResponseObserver());
+            DynamicClient client = new DynamicClient(fullNameToMethodDescriptorMap);
+            requests.stream().filter(rq -> !rq.isIgnoreThisRequest()).forEach(req -> {
+                if (arguments.isPrintResponse()) {
+                    log.info("Response for the method: {} is {}", req.getFullMethodName(), client.invokeService(req));
+                }
+            });
 
-			/*
-			 * ClientCall<DynamicMessage, DynamicMessage> caller =
-			 * channel.newCall(gcpMethodDescriptor, CallOptions.DEFAULT).;
-			 */
-			System.out.println(protoFileToDescriptorMap);
-		} catch (IOException | InterruptedException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-	}
+        } catch (Exception e) {
+            throw new ApplicationException(e, " Error occured while bulding FilDecriptorSet");
+        }
+    }
 
-	private Map<String, MethodDescriptor> fetchMethodDescriptorByMethodName(Set<String> setOfFullNames,
-			Map<String, FileDescriptor> protoFileToDescriptorMap) {
+    private void prepareDynamicMessages(DynamicRequest request,
+            Map<String, MethodDescriptor> fullNameToMethodDescriptorMap) {
+        TypeRegistry.Builder typeRegBuilder = TypeRegistry.newBuilder();
+        Builder messageBuilder = DynamicMessage
+                .newBuilder(fullNameToMethodDescriptorMap.get(request.getFullMethodName()).getInputType());
 
-		List<MethodDescriptor> mdList = new ArrayList<>();
-		protoFileToDescriptorMap.forEach((k, v) -> v.getServices().forEach(sd -> {
-			mdList.addAll(sd.getMethods());
-		}));
+        try {
+            JsonFormat.parser().usingTypeRegistry(typeRegBuilder.build())
+                    .merge(request.getRequestJson(), messageBuilder);
+            request.setMessage(messageBuilder.build());
+        } catch (IOException e) {
+            throw new ApplicationException(e,
+                    "Error ocurred whille buildin Dynamic message for method:{}, Hence aborting the execition for all the requests",
+                    request.getFullMethodName());
+        }
+    }
 
-		return mdList.stream().filter(md -> setOfFullNames.contains(md.getFullName()))
-				.collect(Collectors.toMap(md -> md.getFullName(), md -> md));
-	}
+    private Map<String, MethodDescriptor> buildMethodToMethodDescriptorMap(
+            Map<String, FileDescriptor> protoFileToDescriptorMap) {
 
-	private void resolveFileDescriptor(FileDescriptorProto fdp, Map<String, FileDescriptor> protofileToDescriptorMap,
-			Map<String, FileDescriptorProto> protofileToDescriptorProtoMap) {
-		try {
-			if (fdp.getDependencyCount() == 0) {
-				protofileToDescriptorMap.put(fdp.getName(), FileDescriptor.buildFrom(fdp, new FileDescriptor[0]));
-				return;
-			}
-			if (protofileToDescriptorMap.containsKey(fdp.getName())) {
-				return;
-			}
+        return fetchMethodDescriptorByMethodName(
+                fullMethodNames.stream().collect(Collectors.toSet()), protoFileToDescriptorMap);
+    }
 
-			for (String fileName : fdp.getDependencyList()) {
-				if (!protofileToDescriptorMap.containsKey(fileName)) {
-					resolveFileDescriptor(protofileToDescriptorProtoMap.get(fileName), protofileToDescriptorMap,
-							protofileToDescriptorProtoMap);
-				}
-			}
+    private void executeProtocandBuildProtoBuff(ArgumentConfig arguments, Path descriptorPath)
+            throws IOException, InterruptedException {
+        List<String> protocArgs = new ArrayList<>();
+        protocArgs.add("--proto_path=" + arguments.getProtoRootDirectory());
+        protocArgs.add("--descriptor_set_out=" + descriptorPath.toString());
+        protocArgs.add("--include_imports");
+        arguments.getProtoFiles().forEach(file -> protocArgs.add(arguments.getProtoRootDirectory() + file));
+        Protoc.runProtoc(protocArgs.toArray(new String[0]));
+    }
 
-			ImmutableList.Builder<FileDescriptor> prtoDependencyList = ImmutableList.builder();
-			List<FileDescriptor> l = fdp.getDependencyList().stream().map(protofileToDescriptorMap::get)
-					.collect(Collectors.toList());
+    private Map<String, MethodDescriptor> fetchMethodDescriptorByMethodName(Set<String> setOfFullNames,
+            Map<String, FileDescriptor> protoFileToDescriptorMap) {
 
-			protofileToDescriptorMap.put(fdp.getName(),
-					FileDescriptor.buildFrom(fdp, l.toArray(new FileDescriptor[fdp.getDependencyCount()])));
-			return;
-		} catch (DescriptorValidationException e) {
-			log.error("Error while creating protoDescriptor for {} and exception is", fdp.getName(), e);
-		}
-	}
+        List<MethodDescriptor> mdList = new ArrayList<>();
+        protoFileToDescriptorMap.forEach((k, v) -> v.getServices().forEach(sd -> mdList.addAll(sd.getMethods())));
 
-	private void buildServicesToMethodsMap(String service, List<MethodDescriptorProto> methodDescProtoList,
-			Map<String, List<String>> serviceToMethodListMap) {
-		List<String> methods = methodDescProtoList.stream().map(md -> md.getName()).collect(Collectors.toList());
-		serviceToMethodListMap.put(service, methods);
-	}
+        return mdList.stream().filter(md -> setOfFullNames.contains(md.getFullName()))
+                .collect(Collectors.toMap(MethodDescriptor::getFullName, md -> md));
+    }
+
+    private void resolveFileDescriptor(FileDescriptorProto fdp, Map<String, FileDescriptor> protofileToDescriptorMap,
+            Map<String, FileDescriptorProto> protofileToDescriptorProtoMap) {
+        try {
+            if (fdp.getDependencyCount() == 0) {
+                protofileToDescriptorMap.put(fdp.getName(), FileDescriptor.buildFrom(fdp, new FileDescriptor[0]));
+                return;
+            }
+            if (protofileToDescriptorMap.containsKey(fdp.getName())) {
+                return;
+            }
+
+            for (String fileName : fdp.getDependencyList()) {
+                if (!protofileToDescriptorMap.containsKey(fileName)) {
+                    resolveFileDescriptor(protofileToDescriptorProtoMap.get(fileName), protofileToDescriptorMap,
+                            protofileToDescriptorProtoMap);
+                }
+            }
+
+            List<FileDescriptor> l = fdp.getDependencyList().stream().map(protofileToDescriptorMap::get)
+                    .collect(Collectors.toList());
+
+            protofileToDescriptorMap.put(fdp.getName(),
+                    FileDescriptor.buildFrom(fdp, l.toArray(new FileDescriptor[fdp.getDependencyCount()])));
+        } catch (DescriptorValidationException e) {
+            log.error("Error while creating protoDescriptor for {} and exception is", fdp.getName(), e);
+        }
+    }
 }
