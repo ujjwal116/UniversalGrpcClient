@@ -65,7 +65,7 @@ public class ArgumentConfig {
         Map<String, List<String>> argMap = new HashMap<>();
         while (i < args.length) {
             String command = args[i].substring(2);
-            List<String> values = new ArrayList();
+            List<String> values = new ArrayList<>();
             i++;
             addValuesToList(args, values);
 

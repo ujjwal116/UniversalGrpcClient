@@ -56,15 +56,15 @@ public class DynamicClient {
         StreamObserver<DynamicMessage> streamObserver = new FutureUnaryCallStreamObserverAdapter(
                 completableFuture);
 
-        log.info("*****calling service: {}", request.getFullMethodName());
+        log.info("*****calling service: {}", request.getName());
         ClientCalls.asyncUnaryCall(channel.newCall(grpcMethodDescriptor, CallOptions.DEFAULT),
                 request.getMessage(), streamObserver);
         String response;
         try {
             response = JsonFormat.printer().print(completableFuture.get());
-            log.debug("Response for the service:{} is {}", request.getFullMethodName(), response);
+            log.debug("Response for the service:{} is {}", request.getName(), response);
         } catch (Exception e) {
-            throw new ApplicationException(e, "Couldnt read response for service {}", request.getFullMethodName());
+            throw new ApplicationException(e, "Couldnt read response for service {}", request.getName());
         }
         handleKeyExport(request, response, crossRequestKeyToMetdataValueMap);
         return response;

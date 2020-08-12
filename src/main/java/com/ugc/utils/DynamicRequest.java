@@ -21,4 +21,7 @@ public class DynamicRequest {
     private Map<String, String> metadata;
     private Map<String, String> crossRequestKeyToMetadataKey;
     private Map<String, String> responseFieldToCrossRequestKey;
+    private String validationScript;
+    private String matchingJson;
+    private String name;
 }

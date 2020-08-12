@@ -104,7 +104,7 @@ public class CommandExecuter implements CommandLineRunner {
             DynamicClient client = new DynamicClient(fullNameToMethodDescriptorMap);
             requests.stream().filter(rq -> !rq.isIgnoreThisRequest()).forEach(req -> {
                 if (arguments.isPrintResponse()) {
-                    log.info("Response for the method: {} is {}", req.getFullMethodName(), client.invokeService(req));
+                    log.info("Response for the method: {} is {}", req.getName(), client.invokeService(req));
                 }
             });
 
@@ -126,7 +126,7 @@ public class CommandExecuter implements CommandLineRunner {
         } catch (IOException e) {
             throw new ApplicationException(e,
                     "Error ocurred whille buildin Dynamic message for method:{}, Hence aborting the execition for all the requests",
-                    request.getFullMethodName());
+                    request.getName());
         }
     }
 

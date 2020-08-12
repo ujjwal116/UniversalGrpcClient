@@ -79,7 +79,9 @@ public class RequestReaderUtil {
                             .get(UGCConstants.PORT_KEY).toString()))
                     .metadata(convertJsonToMap(request.get(UGCConstants.METADATA_KEY).toString()))
                     .fullMethodName(request.get(UGCConstants.METHOD_NAME_KEY).toString())
-                    .requestJson(request.get(UGCConstants.REQUEST_KEY).toString()).build();
+                    .requestJson(request.get(UGCConstants.REQUEST_KEY).toString())
+                    .name(path.getFileName().toString())
+                    .build();
         } catch (Exception e) {
             throw new ApplicationException(e,
                     "Erroro occured wile processing file {}" + path.toString());
